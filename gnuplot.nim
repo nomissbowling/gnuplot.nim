@@ -58,13 +58,22 @@ proc cmd*(cmd: string) =
     echo "Error: Couldn't send command to gnuplot"
     quit 1
 
-proc sendPlot(arg: string, title: string, extra: string = "") =
+proc sendPlot(arg: string, title: string, extra: string = "",
+  multi: bool = false) =
   let
     title_line =
       if title == "": " notitle"
       else: " title \"" & title & "\""
+
+  var line: string
+  if multi:
+    if title.len > 0:
+      cmd "set title \"" & title & "\""
+    line = (plotCmd() & arg & extra)
+  else:
     line = (plotCmd() & arg & extra & title_line &
             " with " & toLowerAscii($style))
+
   cmd line
   nplots = nplots + 1
 
@@ -152,6 +161,50 @@ proc plot*[X, Y](xs: openarray[X],
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
   sendPlot("\"" & fname & "\"", title, extra)
+  result = fname
+
+proc plot*[X, Y](xs: openarray[X],
+                ys: seq[seq[Y]],
+                keys: seq[string] = @[""],
+                styles: seq[Style] = @[]): string {.discardable.} =
+  ## plot multiple lines ys[k] versus xs
+  let
+    ncurves = ys.len
+    xslen = xs.len
+    stlen = styles.len
+
+  for i in 0..<ncurves:
+    if xs.len != ys[i].len:
+      raise newException(ValueError, "xs and ys[i] must have same length")
+  let fname = tmpFilename()
+  try:
+    let f = open(fname, fmWrite)
+    for i in xs.low..xs.high:
+      write f, xs[i]
+      for nc in ys.low..<ys.high:
+        write f, " ", ys[nc][i]
+      writeLine f, " ", ys[ys.high][i]
+    f.close
+  except:
+    echo "Error: Couldn't write to temporary file: " & fname
+    quit 1
+
+  func quote(s: string): string =
+    '"' & s & '"'
+
+  let
+    ys_len = ys[0].len
+    keyslen = keys.len
+  var
+    usingline = ""
+    defStyle = toLowerAscii($style)
+
+  for nc in 1..ncurves:
+    usingline &= (if nc > 1: ", \"\" " else: "") & " using 1:" & $(nc+1) &
+      (if nc < keyslen: " title " & quote(keys[nc]) else: "") & " w " &
+      (if nc <= stlen: toLowerAscii($styles[nc-1]) else: defStyle)
+
+  sendplot(quote(fname), keys[0], usingline, true)
   result = fname
 
 proc set_style*(s: Style) =
