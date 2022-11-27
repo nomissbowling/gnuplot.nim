@@ -1,8 +1,11 @@
 import osproc, os, streams, times, random, strutils
+import re, strformat
 
 ## Importing this module will start gnuplot. Array contents are written
 ## to temporary files (in /tmp) and then loaded by gnuplot. The temporary
 ## files aren't deleted automatically in case they would be useful later.
+## To delete temporary file, append result = fname and {.discardable.}
+## To set col:col or pt ps etc instead of set_style(), append parameter extra.
 
 type
   Style* = enum
@@ -36,6 +39,15 @@ proc tmpFilename(): string =
   else:
     getTempDir() & $epochTime() & "-" & $rand(1000) & ".tmp"
 
+proc tmpFileCleanup*() =
+  let
+    q = re"(\d+)\.(\d+)-(\d+)\.tmp"
+    td = getTempDir()
+  for p in (fmt"{td}*.tmp").walkPattern:
+    if p.fileExists and p[td.len..<p.len].match(q):
+      echo fmt"rm {p}"
+      p.removeFile
+
 proc cmd*(cmd: string) =
   echo cmd
   ## send a raw command to gnuplot
@@ -56,15 +68,15 @@ proc sendPlot(arg: string, title: string, extra: string = "") =
   cmd line
   nplots = nplots + 1
 
-proc plot*(equation: string) =
+proc plot*(equation: string, extra: string = "") =
   ## Plot an equation as understood by gnuplot. e.g.:
   ##
   ## .. code-block:: nim
   ##   plot "sin(x)/x"
-  sendPlot equation, equation
+  sendPlot equation, equation, extra
 
 proc plot*(xs: openarray[float64],
-          title = "") =
+          title = "", extra = ""): string {.discardable.} =
   ## plot an array or seq of float64 values. e.g.:
   ##
   ## .. code-block:: nim
@@ -82,11 +94,12 @@ proc plot*(xs: openarray[float64],
   except:
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
-  sendPlot("\"" & fname & "\"", title)
+  sendPlot("\"" & fname & "\"", title, extra)
+  result = fname
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: openarray[Y],
-                title = "") =
+                title = "", extra = " using 1:2"): string {.discardable.} =
   ## plot points taking x and y values from corresponding pairs in
   ## the given arrays.
   ##
@@ -138,7 +151,8 @@ proc plot*[X, Y](xs: openarray[X],
   except:
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
-  sendPlot("\"" & fname & "\"", title, " using 1:2")
+  sendPlot("\"" & fname & "\"", title, extra)
+  result = fname
 
 proc set_style*(s: Style) =
   ## set plotting style
