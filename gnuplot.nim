@@ -23,6 +23,8 @@ var
   gp: Process
   nplots = 0
   style: Style = Lines
+  removeTmp: bool = false
+  tmpFiles: seq[string] = @[]
 
 try:
   gp = startProcess findExe("gnuplot")
@@ -47,6 +49,14 @@ proc tmpFileCleanup*() =
     if p.fileExists and p[td.len..<p.len].match(q):
       echo fmt"rm {p}"
       p.removeFile
+
+proc tmpFileRemove*() =
+  for fn in tmpFiles: fn.removeFile
+  tmpFiles = @[]
+
+proc tmpFilePush*(p: string): string =
+  if removeTmp: tmpFiles.add(p)
+  result = p
 
 proc cmd*(cmd: string) =
   echo cmd
@@ -104,7 +114,7 @@ proc plot*(xs: openarray[float64],
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
   sendPlot("\"" & fname & "\"", title, extra)
-  result = fname
+  result = fname.tmpFilePush
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: openarray[Y],
@@ -161,7 +171,7 @@ proc plot*[X, Y](xs: openarray[X],
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
   sendPlot("\"" & fname & "\"", title, extra)
-  result = fname
+  result = fname.tmpFilePush
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: seq[seq[Y]],
@@ -205,8 +215,11 @@ proc plot*[X, Y](xs: openarray[X],
       (if nc <= stlen: toLowerAscii($styles[nc-1]) else: defStyle)
 
   sendplot(quote(fname), keys[0], usingline, true)
-  result = fname
+  result = fname.tmpFilePush
 
 proc set_style*(s: Style) =
   ## set plotting style
   style = s
+
+proc set_removeTmp*(b: bool) =
+  removeTmp = b
