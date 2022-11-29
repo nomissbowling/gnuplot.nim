@@ -27,11 +27,20 @@ var
   removeTmp: bool = false
   tmpFiles: seq[string] = @[]
 
-try:
-  gp = startProcess findExe("gnuplot")
-except:
-  echo "Error: Couldn't start gnuplot, exe is not found"
-  quit 1
+proc gp_start*() =
+  try:
+    gp = startProcess findExe("gnuplot")
+  except:
+    echo "Error: Couldn't start gnuplot, exe is not found"
+    quit 1
+
+proc gp_close*() =
+  gp.terminate
+  gp.close
+
+proc gp_restart*() =
+  gp_close()
+  gp_start()
 
 proc plotCmd(): string =
   if nplots == 0 or multiplot: "plot " else: "replot "
@@ -227,3 +236,5 @@ proc set_multiplot*(b: bool) =
 
 proc set_removeTmp*(b: bool) =
   removeTmp = b
+
+gp_start()
