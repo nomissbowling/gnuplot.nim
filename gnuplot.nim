@@ -23,6 +23,7 @@ var
   gp: Process
   nplots = 0
   style: Style = Lines
+  multiplot: bool = false
   removeTmp: bool = false
   tmpFiles: seq[string] = @[]
 
@@ -33,7 +34,7 @@ except:
   quit 1
 
 proc plotCmd(): string =
-  if nplots == 0: "plot " else: "replot "
+  if nplots == 0 or multiplot: "plot " else: "replot "
 
 proc tmpFilename(): string =
   when defined(Windows):
@@ -220,6 +221,9 @@ proc plot*[X, Y](xs: openarray[X],
 proc set_style*(s: Style) =
   ## set plotting style
   style = s
+
+proc set_multiplot*(b: bool) =
+  multiplot = b
 
 proc set_removeTmp*(b: bool) =
   removeTmp = b
