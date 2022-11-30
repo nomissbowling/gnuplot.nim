@@ -19,28 +19,59 @@ type
     Boxes,
     Boxerrorbars
 
-var
-  gp: Process
-  nplots = 0
-  style: Style = Lines
-  multiplot: bool = false
-  removeTmp: bool = false
-  tmpFiles: seq[string] = @[]
+type
+  GPsingleton = object
+    gp*: Process
+    removeTmp*: bool
+    tmpFiles*: seq[string]
+
+proc tmpFilePush*(gps: var GPsingleton, p: string): string =
+  if gps.removeTmp: gps.tmpFiles.add(p)
+  result = p
+
+proc tmpFileRemove*(gps: var GPsingleton) =
+  for fn in gps.tmpFiles: fn.removeFile
+  gps.tmpFiles = @[]
+
+proc close(gps: var GPsingleton) =
+  if gps.gp != nil:
+    gps.gp.terminate
+    gps.gp.close
+  gps.tmpFileRemove
+
+proc `=destroy`*(gps: var GPsingleton) =
+  gps.close
+
+var gps: GPsingleton
+
+proc gp_close*() =
+  gps.close
 
 proc gp_start*() =
   try:
-    gp = startProcess findExe("gnuplot")
+    let rt = if gps.gp == nil: false else: gps.removeTmp
+    gps = GPsingleton(gp: startProcess findExe("gnuplot"), removeTmp: rt)
   except:
     echo "Error: Couldn't start gnuplot, exe is not found"
     quit 1
 
-proc gp_close*() =
-  gp.terminate
-  gp.close
-
-proc gp_restart*() =
-  gp_close()
+template gp_restart*() =
   gp_start()
+
+proc set_removeTmp*(b: bool) =
+  gps.removeTmp = b
+
+var
+  multiplot: bool = false
+  nplots = 0
+  style: Style = Lines
+
+proc set_multiplot*(b: bool) =
+  multiplot = b
+
+proc set_style*(s: Style) =
+  ## set plotting style
+  style = s
 
 proc plotCmd(): string =
   if nplots == 0 or multiplot: "plot " else: "replot "
@@ -60,20 +91,12 @@ proc tmpFileCleanup*() =
       echo fmt"rm {p}"
       p.removeFile
 
-proc tmpFileRemove*() =
-  for fn in tmpFiles: fn.removeFile
-  tmpFiles = @[]
-
-proc tmpFilePush*(p: string): string =
-  if removeTmp: tmpFiles.add(p)
-  result = p
-
 proc cmd*(cmd: string) =
   echo cmd
   ## send a raw command to gnuplot
   try:
-    gp.inputStream.writeLine cmd
-    gp.inputStream.flush
+    gps.gp.inputStream.writeLine cmd
+    gps.gp.inputStream.flush
   except:
     echo "Error: Couldn't send command to gnuplot"
     quit 1
@@ -124,7 +147,7 @@ proc plot*(xs: openarray[float64],
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
   sendPlot("\"" & fname & "\"", title, extra)
-  result = fname.tmpFilePush
+  result = gps.tmpFilePush(fname)
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: openarray[Y],
@@ -181,7 +204,7 @@ proc plot*[X, Y](xs: openarray[X],
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
   sendPlot("\"" & fname & "\"", title, extra)
-  result = fname.tmpFilePush
+  result = gps.tmpFilePush(fname)
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: seq[seq[Y]],
@@ -225,16 +248,6 @@ proc plot*[X, Y](xs: openarray[X],
       (if nc <= stlen: toLowerAscii($styles[nc-1]) else: defStyle)
 
   sendplot(quote(fname), keys[0], usingline, true)
-  result = fname.tmpFilePush
-
-proc set_style*(s: Style) =
-  ## set plotting style
-  style = s
-
-proc set_multiplot*(b: bool) =
-  multiplot = b
-
-proc set_removeTmp*(b: bool) =
-  removeTmp = b
+  result = gps.tmpFilePush(fname)
 
 gp_start()
