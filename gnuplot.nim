@@ -17,7 +17,8 @@ type
     Steps,
     Errorbars,
     Boxes,
-    Boxerrorbars
+    Boxerrorbars,
+    LabelsBoxed
 
 type
   GPsingleton = object
@@ -76,11 +77,15 @@ proc set_style*(s: Style) =
 proc plotCmd(): string =
   if nplots == 0 or multiplot: "plot " else: "replot "
 
+proc tmpTimeStamp(b: bool = false): string =
+  result = $epochTime() & "-" & $rand(1000)
+  if b: result = result.replace(".", "").replace("-", "")
+
 proc tmpFilename(): string =
   when defined(Windows):
-    (getEnv("TEMP") / ($epochTime() & "-" & $rand(1000) & ".tmp")).replace("\\", "/")
+    (getEnv("TEMP") / (tmpTimeStamp() & ".tmp")).replace("\\", "/")
   else:
-    getTempDir() & $epochTime() & "-" & $rand(1000) & ".tmp"
+    getTempDir() & tmpTimeStamp() & ".tmp"
 
 proc tmpFileCleanup*() =
   let
@@ -101,6 +106,10 @@ proc cmd*(cmd: string) =
     echo "Error: Couldn't send command to gnuplot"
     quit 1
 
+proc toString(s: Style): string =
+  if s == LabelsBoxed: return "labels boxed"
+  toLowerAscii($s)
+
 proc sendPlot(arg: string, title: string, extra: string = "",
   multi: bool = false) =
   let
@@ -114,8 +123,7 @@ proc sendPlot(arg: string, title: string, extra: string = "",
       cmd "set title \"" & title & "\""
     line = (plotCmd() & arg & extra)
   else:
-    line = (plotCmd() & arg & extra & title_line &
-            " with " & toLowerAscii($style))
+    line = (plotCmd() & arg & extra & title_line & " with " & style.toString)
 
   cmd line
   nplots = nplots + 1
@@ -207,6 +215,26 @@ proc plot*[X, Y](xs: openarray[X],
   result = gps.tmpFilePush(fname)
 
 proc plot*[X, Y](xs: openarray[X],
+                ys: openarray[Y],
+                labels: seq[string],
+                title = "", extra = ""): string {.discardable.} =
+  if xs.len != ys.len or xs.len != labels.len:
+    raise newException(ValueError, "xs and ys and labels must have same length")
+  let fname = tmpFilename()
+  # let ts = tmpTimeStamp(true)
+  try:
+    let f = open(fname, fmWrite)
+    for i in xs.low..xs.high:
+      writeLine f, xs[i], " ", ys[i], " ", labels[i]
+    f.close
+  except:
+    echo "Error: Couldn't write to temporary file: " & fname
+    quit 1
+  sendPlot("\"" & fname & "\"", title, extra)
+  # sendPlot("$data" & ts, title, extra)
+  result = gps.tmpFilePush(fname)
+
+proc plot*[X, Y](xs: openarray[X],
                 ys: seq[seq[Y]],
                 keys: seq[string] = @[""],
                 styles: seq[Style] = @[]): string {.discardable.} =
@@ -238,14 +266,11 @@ proc plot*[X, Y](xs: openarray[X],
   let
     ys_len = ys[0].len
     keyslen = keys.len
-  var
-    usingline = ""
-    defStyle = toLowerAscii($style)
-
+  var usingline = ""
   for nc in 1..ncurves:
     usingline &= (if nc > 1: ", \"\" " else: "") & " using 1:" & $(nc+1) &
-      (if nc < keyslen: " title " & quote(keys[nc]) else: "") & " w " &
-      (if nc <= stlen: toLowerAscii($styles[nc-1]) else: defStyle)
+      (if nc < keyslen: " title " & quote(keys[nc]) else: "") &
+      " with " & (if nc <= stlen: styles[nc-1] else: style).toString
 
   sendplot(quote(fname), keys[0], usingline, true)
   result = gps.tmpFilePush(fname)
