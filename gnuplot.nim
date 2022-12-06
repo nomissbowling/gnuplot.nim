@@ -219,7 +219,7 @@ proc plot*[X, Y](xs: openarray[X],
                 labels: seq[string],
                 title = "", extra = ""): string {.discardable.} =
   if xs.len != ys.len or xs.len != labels.len:
-    raise newException(ValueError, "xs and ys and labels must have same length")
+    raise newException(ValueError, "xs, ys and labels must have same length")
   let fname = tmpFilename()
   # let ts = tmpTimeStamp(true)
   try:
@@ -230,8 +230,12 @@ proc plot*[X, Y](xs: openarray[X],
   except:
     echo "Error: Couldn't write to temporary file: " & fname
     quit 1
-  sendPlot("\"" & fname & "\"", title, extra)
-  # sendPlot("$data" & ts, title, extra)
+  block:
+    let style_bk = style
+    defer: set_style(style_bk)
+    set_style(LabelsBoxed)
+    sendPlot("\"" & fname & "\"", title, extra)
+    # sendPlot("$data" & ts, title, extra)
   result = gps.tmpFilePush(fname)
 
 proc plot*[X, Y](xs: openarray[X],
