@@ -4,7 +4,7 @@ import re, strformat
 ## Importing this module will start gnuplot. Array contents are written
 ## to temporary files (in /tmp) and then loaded by gnuplot. The temporary
 ## files aren't deleted automatically in case they would be useful later.
-## To delete temporary file, append result = fname and {.discardable.}
+## To delete temporary file, result = gps.tmpFilePush(temp) and {.discardable.}
 ## To set col:col or pt ps etc instead of set_style(), append parameter extra.
 
 type
@@ -23,11 +23,12 @@ type
 type
   GPsingleton = object
     gp*: Process
+    useTmp*: bool
     removeTmp*: bool
     tmpFiles*: seq[string]
 
 proc tmpFilePush*(gps: var GPsingleton, p: string): string =
-  if gps.removeTmp: gps.tmpFiles.add(p)
+  if gps.useTmp and gps.removeTmp: gps.tmpFiles.add(p)
   result = p
 
 proc tmpFileRemove*(gps: var GPsingleton) =
@@ -50,14 +51,23 @@ proc gp_close*() =
 
 proc gp_start*() =
   try:
-    let rt = if gps.gp == nil: false else: gps.removeTmp
-    gps = GPsingleton(gp: startProcess findExe("gnuplot"), removeTmp: rt)
+    var
+      ut = true
+      rt = false
+    if gps.gp != nil:
+      ut = gps.useTmp
+      rt = gps.removeTmp
+    gps = GPsingleton(gp: startProcess findExe("gnuplot"),
+      useTmp: ut, removeTmp: rt)
   except:
     echo "Error: Couldn't start gnuplot, exe is not found"
     quit 1
 
 template gp_restart*() =
   gp_start()
+
+proc set_useTmp*(b: bool) =
+  gps.useTmp = b
 
 proc set_removeTmp*(b: bool) =
   gps.removeTmp = b
@@ -79,7 +89,7 @@ proc plotCmd(): string =
 
 proc tmpTimeStamp(b: bool = false): string =
   result = $epochTime() & "-" & $rand(1000)
-  if b: result = result.replace(".", "").replace("-", "")
+  if b: result = "tmp" & result.replace(".", "").replace("-", "")
 
 proc tmpFilename(): string =
   when defined(Windows):
@@ -96,8 +106,8 @@ proc tmpFileCleanup*() =
       echo fmt"rm {p}"
       p.removeFile
 
-proc cmd*(cmd: string) =
-  echo cmd
+proc cmd*(cmd: string; noEcho: bool=false) =
+  if not noEcho: echo cmd
   ## send a raw command to gnuplot
   try:
     gps.gp.inputStream.writeLine cmd
@@ -128,6 +138,33 @@ proc sendPlot(arg: string, title: string, extra: string = "",
   cmd line
   nplots = nplots + 1
 
+proc quote(s: string): string =
+  '"' & s & '"'
+
+proc mkTemp(): tuple[temp: string, msg: string] =
+  let temp = if gps.useTmp: tmpFilename() else: tmpTimeStamp(true)
+  result = (temp: temp, msg: "Error: Couldn't write to " &
+    (if gps.useTmp: "string stream: " else: "temporary file: ") & temp)
+
+template nameStream(temp: string): string =
+  if gps.useTmp: quote(temp) else: ("$" & temp)
+
+template openStream(temp: string): Stream =
+  if not gps.useTmp:
+    let s = newStringStream()
+    s.write("$" & temp & " << EOD\x0a")
+    s
+  else:
+    newFileStream(temp, fmWrite)
+
+template closeStream(fs: Stream) =
+  if not gps.useTmp:
+    fs.write("EOD\x0a")
+    fs.flush
+    fs.setPosition(0)
+    cmd fs.readAll
+  fs.close
+
 proc plot*(equation: string, extra: string = "") =
   ## Plot an equation as understood by gnuplot. e.g.:
   ##
@@ -145,17 +182,17 @@ proc plot*(xs: openarray[float64],
   ##   let xs = newSeqWith(20, random(1.0))
   ##
   ##   plot xs, "random values"
-  let fname = tmpFilename()
+  let (temp, errMsg) = mkTemp()
   try:
-    let f = open(fname, fmWrite)
+    let fs: Stream = temp.openStream
     for x in xs:
-      writeLine f, x
-    f.close
+      fs.write(x, "\x0a")
+    fs.closeStream
   except:
-    echo "Error: Couldn't write to temporary file: " & fname
+    echo errMsg
     quit 1
-  sendPlot("\"" & fname & "\"", title, extra)
-  result = gps.tmpFilePush(fname)
+  sendPlot(temp.nameStream, title, extra)
+  result = gps.tmpFilePush(temp)
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: openarray[Y],
@@ -202,17 +239,17 @@ proc plot*[X, Y](xs: openarray[X],
   ##   plot X, Y, "spiral"
   if xs.len != ys.len:
     raise newException(ValueError, "xs and ys must have same length")
-  let fname = tmpFilename()
+  let (temp, errMsg) = mkTemp()
   try:
-    let f = open(fname, fmWrite)
+    let fs: Stream = temp.openStream
     for i in xs.low..xs.high:
-      writeLine f, xs[i], " ", ys[i]
-    f.close
+      fs.write(xs[i], " ", ys[i], "\x0a")
+    fs.closeStream
   except:
-    echo "Error: Couldn't write to temporary file: " & fname
+    echo errMsg
     quit 1
-  sendPlot("\"" & fname & "\"", title, extra)
-  result = gps.tmpFilePush(fname)
+  sendPlot(temp.nameStream, title, extra)
+  result = gps.tmpFilePush(temp)
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: openarray[Y],
@@ -220,23 +257,21 @@ proc plot*[X, Y](xs: openarray[X],
                 title = "", extra = ""): string {.discardable.} =
   if xs.len != ys.len or xs.len != labels.len:
     raise newException(ValueError, "xs, ys and labels must have same length")
-  let fname = tmpFilename()
-  # let ts = tmpTimeStamp(true)
+  let (temp, errMsg) = mkTemp()
   try:
-    let f = open(fname, fmWrite)
+    let fs: Stream = temp.openStream
     for i in xs.low..xs.high:
-      writeLine f, xs[i], " ", ys[i], " ", labels[i]
-    f.close
+      fs.write(xs[i], " ", ys[i], " ", labels[i], "\x0a")
+    fs.closeStream
   except:
-    echo "Error: Couldn't write to temporary file: " & fname
+    echo errMsg
     quit 1
   block:
     let style_bk = style
     defer: set_style(style_bk)
     set_style(LabelsBoxed)
-    sendPlot("\"" & fname & "\"", title, extra)
-    # sendPlot("$data" & ts, title, extra)
-  result = gps.tmpFilePush(fname)
+    sendPlot(temp.nameStream, title, extra)
+  result = gps.tmpFilePush(temp)
 
 proc plot*[X, Y](xs: openarray[X],
                 ys: seq[seq[Y]],
@@ -251,21 +286,18 @@ proc plot*[X, Y](xs: openarray[X],
   for i in 0..<ncurves:
     if xs.len != ys[i].len:
       raise newException(ValueError, "xs and ys[i] must have same length")
-  let fname = tmpFilename()
+  let (temp, errMsg) = mkTemp()
   try:
-    let f = open(fname, fmWrite)
+    let fs: Stream = temp.openStream
     for i in xs.low..xs.high:
-      write f, xs[i]
+      fs.write(xs[i])
       for nc in ys.low..<ys.high:
-        write f, " ", ys[nc][i]
-      writeLine f, " ", ys[ys.high][i]
-    f.close
+        fs.write(" ", ys[nc][i])
+      fs.write(" ", ys[ys.high][i], "\x0a")
+    fs.closeStream
   except:
-    echo "Error: Couldn't write to temporary file: " & fname
+    echo errMsg
     quit 1
-
-  func quote(s: string): string =
-    '"' & s & '"'
 
   let
     ys_len = ys[0].len
@@ -276,7 +308,7 @@ proc plot*[X, Y](xs: openarray[X],
       (if nc < keyslen: " title " & quote(keys[nc]) else: "") &
       " with " & (if nc <= stlen: styles[nc-1] else: style).toString
 
-  sendplot(quote(fname), keys[0], usingline, true)
-  result = gps.tmpFilePush(fname)
+  sendPlot(temp.nameStream, keys[0], usingline, true)
+  result = gps.tmpFilePush(temp)
 
 gp_start()
