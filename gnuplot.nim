@@ -290,10 +290,10 @@ proc plot*[X, Y](xs: openarray[X],
   try:
     let fs: Stream = temp.openStream
     for i in xs.low..xs.high:
-      fs.write(xs[i])
+      fs.write(xs[i], " ")
       for nc in ys.low..<ys.high:
-        fs.write(" ", ys[nc][i])
-      fs.write(" ", ys[ys.high][i], "\x0a")
+        fs.write(ys[nc][i], " ")
+      fs.write(ys[ys.high][i], "\x0a")
     fs.closeStream
   except:
     echo errMsg
