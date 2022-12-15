@@ -110,7 +110,7 @@ proc cmd*(cmd: string; noEcho: bool=false) =
   if not noEcho: echo cmd
   ## send a raw command to gnuplot
   try:
-    gps.gp.inputStream.writeLine cmd
+    gps.gp.inputStream.write(cmd, "\x0a")
     gps.gp.inputStream.flush
   except:
     echo "Error: Couldn't send command to gnuplot"
